@@ -1,0 +1,22 @@
+# Python
+*.pyc
+__pycache__/
+venv/
+*.py[cod]
+
+# Flask
+instance/
+.webassets-cache
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+
+.venv
