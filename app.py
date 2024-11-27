@@ -28,11 +28,16 @@ def predict_toxicity(comment_text):
 
 
 def sanitize_comment(text):
+    def mask_word(word):
+        # Trả về số lượng dấu '*' bằng độ dài của từ
+        return '*' * len(word)
+
     words = text.split()
     sanitized_words = [
-        "***" if predict_toxicity(word) else word for word in words
+        mask_word(word) if predict_toxicity(word) else word for word in words
     ]
     return " ".join(sanitized_words)
+
 
 def consume_comments():
     consumer = KafkaConsumer(
