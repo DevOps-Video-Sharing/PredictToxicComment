@@ -1,19 +1,24 @@
 from flask import Flask, request, jsonify
 from kafka import KafkaConsumer, KafkaProducer
-from tensorflow.keras.models import load_model
-import joblib
+import torch
+from transformers import BertTokenizer, BertForSequenceClassification
 import json
-import re
+from threading import Thread
 
 # Kafka config
-KAFKA_BROKER = 'localhost:9092'
+KAFKA_BROKER = '192.168.120.131:31182'
 SANITIZE_TOPIC = 'sanitize-comments'
 RESULT_TOPIC = 'sanitized-comments'
 
 app = Flask(__name__)
 
-loaded_vect = joblib.load('tfidf_vectorizer.pkl')
-loaded_model = load_model('toxic_comment_model.h5')
+# Load model and tokenizer
+model_name = "Model_Training"
+tokenizer = BertTokenizer.from_pretrained(model_name)
+model = BertForSequenceClassification.from_pretrained(model_name)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = model.to(device)
 
 # Kafka producer
 producer = KafkaProducer(
@@ -21,23 +26,32 @@ producer = KafkaProducer(
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
 
-def predict_toxicity(comment_text):
-    comment_tfidf = loaded_vect.transform([comment_text])
-    prediction = (loaded_model.predict(comment_tfidf.toarray()) > 0.5).astype(int)
-    return bool(prediction[0][0])
+def predict_user_input(input_text, model, tokenizer, device):
+    user_input = [input_text]
+    user_encodings = tokenizer(
+        user_input, truncation=True, padding=True, return_tensors="pt"
+    )
+    input_ids = user_encodings['input_ids'].to(device)
+    attention_mask = user_encodings['attention_mask'].to(device)
 
+    model.eval()
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+        logits = outputs.logits
+        predictions = torch.sigmoid(logits)
+
+    return (predictions.cpu().numpy() > 0.5).astype(int)[0]
 
 def sanitize_comment(text):
     def mask_word(word):
-        # Trả về số lượng dấu '*' bằng độ dài của từ
         return '*' * len(word)
 
     words = text.split()
     sanitized_words = [
-        mask_word(word) if predict_toxicity(word) else word for word in words
+        mask_word(word) if any(predict_user_input(word, model, tokenizer, device)) else word
+        for word in words
     ]
     return " ".join(sanitized_words)
-
 
 def consume_comments():
     consumer = KafkaConsumer(
@@ -53,12 +67,11 @@ def consume_comments():
         comment_text = comment_data.get('text', '')
         sanitized_text = sanitize_comment(comment_text)
 
-        # Cập nhật trường sanitizedText
+        # Update sanitizedText field
         comment_data['sanitizedText'] = sanitized_text
 
-        # Gửi phản hồi qua Kafka topic sanitized-comments
+        # Send response to sanitized-comments topic
         producer.send(RESULT_TOPIC, comment_data)
-        
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -73,15 +86,15 @@ def predict():
 
     results = []
     for comment_text in comments:
-        is_toxic = predict_toxicity(comment_text)
+        predicted_labels = predict_user_input(comment_text, model, tokenizer, device)
+        is_toxic = any(predicted_labels)
         result = {"comment": comment_text, "toxic": is_toxic}
         results.append(result)
 
     return jsonify(results)
 
 if __name__ == '__main__':
-    from threading import Thread
     consumer_thread = Thread(target=consume_comments)
     consumer_thread.start()
 
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5609)

@@ -20,3 +20,5 @@ instance/
 .env.*
 
 .venv
+
+Model_Training
