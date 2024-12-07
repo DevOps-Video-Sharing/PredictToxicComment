@@ -6,7 +6,7 @@ import json
 from threading import Thread
 
 # Kafka config
-KAFKA_BROKER = '192.168.120.131:31182'
+KAFKA_BROKER = '192.168.2.240:9092'
 SANITIZE_TOPIC = 'sanitize-comments'
 RESULT_TOPIC = 'sanitized-comments'
 
